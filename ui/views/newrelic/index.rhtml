@@ -1,0 +1,17 @@
+<table>
+	<tr>
+		<th>R/T</th>
+		<th>URL</th>
+	</tr>
+	<% @samples.each do |sample| %>
+		<tr>
+		<td align=left>
+			<%= stripped_sample(sample).duration.to_ms %> ms
+		</td>
+		<td>
+			<%= link_to "/#{sample.params[:path]}", :action => :view_sample, :id => sample.sample_id %>
+		</td>
+			
+		</tr>
+	<% end %>
+</table>

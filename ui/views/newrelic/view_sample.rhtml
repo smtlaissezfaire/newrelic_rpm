@@ -1,0 +1,66 @@
+<table>
+	<tr>
+		<td valign='middle' align='left'>
+		<b>URL:</b> /<%= @sample.params[:path]%><br/>
+		<b>Time Stamp:</b> <%= @sample.start_time%><br/>
+		<b>Duration:</b> <%= @sample.duration.to_ms%> ms<br/>
+		<% if false # turn on for debugging marshaled object size... %>
+		<b>Serialized Size:</b> <%= Marshal.dump(@sample).length / 1024 %> kb<br/>
+		<% end %>
+		</td>
+		<td valign='middle' align='right'>
+		</td>
+	</tr>
+</table>
+
+<%
+def show_view(page, id)
+	['pie_chart', 'table', 'sql', 'text_dump'].each do |view|
+		page[view].hide 
+	end
+
+	page[id].show
+end
+%>
+
+<%= link_to_function("[Pie Chart]") { |page| show_view page, 'pie_chart' } %>
+<%= link_to_function("[Full Table]") { |page| show_view page, 'table' } %>
+<%= link_to_function("[SQL]") { |page| show_view page, 'sql' } %>
+<%= link_to_function("[Text Dump]") { |page| show_view page, 'text_dump' } %>
+<br/>
+<br/>
+
+<div id='pie_chart' align=center>
+	<h3>Performance Breakdown</h3>
+	<br/>
+	<% @pie_chart.width = 800; @pie_chart.height = 300 %>
+	<%= @pie_chart.render %>
+	<br/>
+	<table>
+		<%= render :partial => 'table', :object => @sample.breakdown_data(6) %>
+	</table>
+</div>
+
+<div id='table' align=left>
+	<%= render :partial => 'table', :object => @sample.breakdown_data %>
+</div>
+
+<div id='sql'>
+	<table width=100%>
+		<tr>
+			<th></th>
+			<th>Duration</th>
+			<th align=left>SQL</th>
+		</tr>
+		
+		<%= render :partial => 'sql_row', :collection => @sample.sql_segments %>
+	</table>
+</div>
+
+<div id='text_dump'>
+<pre>
+<%= @sample.to_s %>
+</pre>
+</div>
+
+<%= update_page_tag {|page| show_view page, 'pie_chart'} %>
