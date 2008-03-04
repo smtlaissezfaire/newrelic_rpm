@@ -1,10 +1,12 @@
 require 'logger'
 
 class Module
-  # cattr_accessor is missing from unit test context so we need to hand code
+  DEFAULT_METHOD_TRACE_LOG = Logger.new(STDERR)
+  DEFAULT_METHOD_TRACE_LOG.level = Logger::ERROR
+  
   # the class accessor for the instrumentation log
   def method_tracer_log
-    @@method_trace_log ||= Logger.new(STDERR)
+    @@method_trace_log ||= DEFAULT_METHOD_TRACE_LOG
   end
   
   def method_tracer_log= (log)
@@ -40,7 +42,7 @@ class Module
   # Add a method tracer to the specified method.  
   # metric_name_code is ruby code that determines the name of the
   # metric to be collected during tracing.  As such, the code
-  # should be provided in 'single quoute' strings rather than
+  # should be provided in 'single quote' strings rather than
   # "double quote" strings, so that #{} evaluation happens
   # at traced method execution time.
   # Example: tracing a method :foo, where the metric name is
@@ -77,6 +79,9 @@ class Module
   
     alias_method _untraced_method_name(method_name, metric_name_code), method_name
     alias_method method_name, "#{_traced_method_name(method_name, metric_name_code)}"
+    
+    method_tracer_log.debug("Traced method: class = #{self}, method = #{method_name}, "+
+        "metric = '#{metric_name_code}', push scope=#{push_scope}")
   end
 
   # Not recommended for production use, because tracers must be removed in reverse-order
