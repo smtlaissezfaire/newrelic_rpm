@@ -2,10 +2,10 @@ require 'net/https'
 require 'net/http'
 require 'logger'
 require 'singleton'
+require 'zlib'
 
 require 'newrelic/stats'
 require 'newrelic/agent/worker_loop'
-require 'newrelic/agent_messages'
 
 require 'newrelic/agent/stats_engine'
 require 'newrelic/agent/transaction_sampler'
@@ -13,6 +13,11 @@ require 'newrelic/agent/transaction_sampler'
 # if Mongrel isn't present, we still need a class declaration
 module Mongrel
   class HttpServer; end
+end
+
+# same for Thin HTTP Server
+module Thin
+  class Server; end
 end
 
 # The NewRelic Agent collects performance data from rails applications in realtime as the
@@ -55,12 +60,17 @@ module NewRelic::Agent
   class Agent
     # Specifies the version of the agent's communication protocol
     # with the NewRelic hosted site.
-    PROTOCOL_VERSION = 1
+    #
+    # VERSION HISTORY
+    # 1: Private Beta, Jan 10, 2008.  Serialized Marshalled Objects.  Unsupported after 5/29/2008.
+    # 2: Private Beta, March 15, 2008.  Compressed JSON (15-20x smaller, platform independant.)
+    PROTOCOL_VERSION = 2
     
     include Singleton
     
     DEFAULT_HOST = 'localhost'
     DEFAULT_PORT = 3000
+    SAMPLE_THRESHOLD = 2.seconds
     
     attr_reader :stats_engine
     attr_reader :transaction_sampler
@@ -83,7 +93,7 @@ module NewRelic::Agent
       
       @config = config
       
-      @local_port = determine_port
+      @local_port = determine_environment_and_port
       @local_host = determine_host
       
       setup_log
@@ -93,7 +103,7 @@ module NewRelic::Agent
       
       @license_key = config.fetch('license_key', nil)
       unless @license_key
-        log! "No license key found.  Please insert your license key into agent/new_relic.yml"
+        log! "No license key found.  Please insert your license key into agent/newrelic.yml"
         return
       end
       
@@ -128,6 +138,7 @@ module NewRelic::Agent
         @launch_time = Time.now
        
         @metric_ids = {}
+        @environment = :unknown
         
         @stats_engine = StatsEngine.new
         @transaction_sampler = TransactionSampler.new(self)
@@ -157,6 +168,7 @@ module NewRelic::Agent
         
         log! "New Relic RPM Agent Initialized: pid = #{$$}"
         to_stderr "Agent Log is found in #{log_file}"
+        log.info "Runtime environment: #{@environment.to_s.titleize}"
       end
       
       # Connect to the server, and run the worker loop forever
@@ -165,7 +177,7 @@ module NewRelic::Agent
         # the user explicitly asks to monitor non-mongrel processes (assumed to 
         # be daemons) by setting 'monitor_daemons' to true in newrelic.yaml
         # attempt to connect to the server
-        return unless @local_port || config['monitor_daemons']
+        return unless should_run?
         
         until @connected
           should_retry = connect
@@ -180,8 +192,19 @@ module NewRelic::Agent
         @worker_loop.add_task(report_period) do 
           harvest_and_send_timeslice_data
         end
-
+        
+        if @should_send_samples
+          @worker_loop.add_task(report_period) do 
+            harvest_and_send_slowest_sample
+          end
+        end
+  
         @worker_loop.run
+      end
+      
+      # return true if the agent should run the worker loop.
+      def should_run?
+        @local_port || config['monitor_daemons'] || @environment == :thin
       end
     
       def connect
@@ -197,14 +220,17 @@ module NewRelic::Agent
         log! "Connected to NewRelic Service at #{@remote_host}:#{@remote_port}."
         log.debug "Agent ID = #{@agent_id}."
 
+        # Ask the server for permission to send transaction samples.  determined by suvbscription license.
+        @should_send_samples = invoke_remote :should_collect_samples, @agent_id
+        
         @connected = true
         @last_harvest_time = Time.now
         return true
         
       rescue LicenseException => e
         log! e.message, :error
-        log! "Visit NewRelic.com to obtain a valid license key, or contact NewRelic support to recover your license key"
-        log! "Turning New Relic Agent off.  Restart your Mongrel after putting the correct license key in config/newrelic.yml"
+        log! "Visit NewRelic.com to obtain a valid license key, or to upgrade your account."
+        log! "Turning New Relic Agent off."
         return false
         
       rescue Exception => e
@@ -242,21 +268,46 @@ module NewRelic::Agent
       def determine_host
         Socket.gethostname
       end
-      
-      def determine_port
+
+      # determine the environment we are running in (one of :webrick,
+      # :mongrel, :thin, or :unknown) and if the process is listening
+      # on a port, return the port # that we are listening on.
+      def determine_environment_and_port
         port = nil
         
         # OPTIONS is set by script/server 
         port = OPTIONS.fetch :port, DEFAULT_PORT
+        @environment = :webrick
+        
       rescue NameError
         # this case covers starting by mongrel_rails
         # TODO review this approach.  There should be only one http server
         # allocated in a given rails process...
         ObjectSpace.each_object(Mongrel::HttpServer) do |mongrel|
           port = mongrel.port
+          @environment = :mongrel
         end
+        
+        # this case covers the thin web server
+        # Same issue as above- we assume only one instance per process
+        # NOTE if a thin server and a mongrel server were to coexist in a single
+        # ruby process (no idea why that would ever happen) the thin server
+        # would "win out" as the determined runtime environment
+        ObjectSpace.each_object(Thin::Server) do |thin_server|
+          @environment = :thin
+          
+          # TODO when thin uses UNIX domain sockets, we likely don't have a port
+          # setting.  So therefore we need another way to uniquely define this
+          # "instance", otherwise, a host running >1 thin instances will appear
+          # as 1 agent to us, and we will have a license counting problem (as well
+          # as a data granularity problem).
+          port = thin_server.port
+        end
+        
       rescue NameError
         log.info "Could not determine port.  Likely running as a cgi"
+        @environment = :unknown
+        
       ensure
         return port
       end
@@ -277,6 +328,7 @@ module NewRelic::Agent
             log.info "Processed instrumentation file '#{file.split('/').last}'"
           rescue Exception => e
             log.error "Error loading instrumentation file '#{file}': #{e}"
+            log.debug e.backtrace.join("\n")
           end
         end
       end
@@ -305,26 +357,18 @@ module NewRelic::Agent
         # then the metric data is downsampled for another timeslices
       end
 
-      def harvest_and_send_sample_data
-        @unsent_samples ||= []
-        @unsent_samples = @transaction_sampler.harvest_samples(@unsent_samples)
+      def harvest_and_send_slowest_sample
+        @slowest_sample = @transaction_sampler.harvest_slowest_sample(@slowest_sample)
         
-        # limit the sample data to 100 elements, to prevent server flooding
-        @unsent_samples = @unsent_samples[0..100] if @unsent_samples.length > 100
-        
-        # avoid the webservice call if there is no data to send
-        if @unsent_samples.length > 0
-          sample_data = []
-          @unsent_samples.each do |sample|
-            sample_data.push Marshal.dump(sample)
-          end
-          
-          messages = invoke_remote :transaction_sample_data, @agent_id, sample_data
-        
-          # if we successfully invoked the web service, then clear the unsent sample cache
-          @unsent_samples.clear
-          handle_messages messages
+        if @slowest_sample && @slowest_sample.duration > SAMPLE_THRESHOLD
+          log.debug "Sending Slowest Sample: #{@slowest_sample.params[:path]}, #{@slowest_sample.duration.to_ms} ms" if @slowest_sample
+          invoke_remote :transaction_sample_data, @agent_id, @slowest_sample 
         end
+        
+        # if we succeed sending this sample, then we don't need to keep the slowest sample
+        # around - it has been sent already and we can collect the next one
+        @slowest_sample = nil
+      rescue Exception => e
       end
 
       def ping
@@ -342,11 +386,54 @@ module NewRelic::Agent
             log.error "Error handling message: #{e}"
             log.debug e.backtrace.join("\n")
           end
-        end
+        end 
       end
       
       # send a message via post
+      # As of Version 2, the agent-server protocol is:
+      # params[:method] => method name(string)
+      # params[:license_key] => license key(string)
+      # params[:version] => protocol version(integer, 2 or higher)
       def invoke_remote(method, *args)
+        # we currently optimize for CPU here since we get roughly a 10x reduction in
+        # message size with this, and CPU overhead is at a premium.  If we wanted
+        # to go for a 20x compression instead, we could use Zlib::BEST_COMPRESSION and 
+        # pay a little more CPU.
+        post_data = CGI::escape(Zlib::Deflate.deflate(Marshal.dump(args), Zlib::BEST_SPEED))
+        
+        request = Net::HTTP.new(@remote_host, @remote_port.to_i) 
+        if @use_ssl
+          request.use_ssl = true 
+          request.verify_mode = OpenSSL::SSL::VERIFY_NONE
+        end
+
+        # FIXME for the life of me I cant find the API that assembles query parameters into a 
+        # URI, so I have to hard code it here. Ugly to say the least.
+        uri = "/agent_listener/invoke_raw_method?method=#{method}&license_key=#{license_key}&protocol_version=#{PROTOCOL_VERSION}"
+        response = request.start do |http|
+          http.post(uri, post_data) 
+        end
+
+        if response.is_a? Net::HTTPSuccess
+          return_value = Marshal.load(Zlib::Inflate.inflate(CGI::unescape(response.body)))
+        else
+          raise Exception.new("#{response.code}: #{response.message}")
+        end
+      rescue Exception => e
+        log.error("Error communicating with RPM Service at #{@remote_host}:#{remote_port}: #{e}")
+        log.debug(e.backtrace.join("\n"))
+        return_value = e
+      ensure
+        if return_value.is_a? Exception
+          raise return_value
+        else
+          return return_value
+        end
+      end
+      
+      # keeping this around for a little while
+      # TODO remove this dead code before GA.
+      def invoke_remote_v1(method, *args)
         post_data = [license_key, method, PROTOCOL_VERSION, args]
         post_data = CGI::escape(Marshal.dump(post_data))
         
@@ -363,7 +450,7 @@ module NewRelic::Agent
         if response.is_a? Net::HTTPSuccess
           return_value = Marshal.load(CGI::unescape(response.body))
         else
-          raise Exception.new "#{response.code}: #{response.message}"
+          raise Exception.new("#{response.code}: #{response.message}")
         end
       rescue Exception => e
         log.error("Error communicating with RPM Service at #{@remote_host}:#{remote_port}: #{e}")

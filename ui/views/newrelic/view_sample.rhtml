@@ -1,12 +1,25 @@
 <table>
 	<tr>
 		<td valign='middle' align='left'>
-		<b>URL:</b> /<%= @sample.params[:path]%><br/>
+		<b>URL:</b> <%= @sample.params[:uri]%><br/>
+		<b>Controller:</b> <%= @sample_controller_name %><br/>
+		<b>Action:</b> <%= @sample_action_name %><br/>
+
 		<b>Time Stamp:</b> <%= @sample.start_time%><br/>
 		<b>Duration:</b> <%= @sample.duration.to_ms%> ms<br/>
 		<% if false # turn on for debugging marshaled object size... %>
 		<b>Serialized Size:</b> <%= Marshal.dump(@sample).length / 1024 %> kb<br/>
 		<% end %>
+    <% unless (@sample.params[:request_params] || {}).empty? %>
+     <p>
+       <b>Params</b><br/>
+       <small>
+       <% (@sample.params[:request_params] || {}).each do |k,v| %>
+         <b>&nbsp &nbsp <%= k %>: </b><%=v%><br/>
+       <% end %>
+       </small>
+     </p>
+     <% end %>
 		</td>
 		<td valign='middle' align='right'>
 		</td>
@@ -23,6 +36,7 @@ def show_view(page, id)
 end
 %>
 
+<br/>
 <%= link_to_function("[Pie Chart]") { |page| show_view page, 'pie_chart' } %>
 <%= link_to_function("[Full Table]") { |page| show_view page, 'table' } %>
 <%= link_to_function("[SQL]") { |page| show_view page, 'sql' } %>
@@ -46,15 +60,24 @@ end
 </div>
 
 <div id='sql'>
+  <% if rows_logger_present? %>
+    <h3>Plugin Incompatibility</h3>
+    The Rows Logger plugin rewrites part of Active Record, which in effect turns off the 
+    SQL statement tracing functionality of NewRelic RPM Desktop Edition. To gain SQL statement
+    visibility, you must remove <samp>rows_logger_plugin</samp>, or change your plugin load order 
+    so that the rows logger is loaded first.  
+  <% else %>
 	<table width=100%>
 		<tr>
-			<th></th>
+			<th>Timestamp</th>
 			<th>Duration</th>
+			<th></th>
 			<th align=left>SQL</th>
 		</tr>
 		
 		<%= render :partial => 'sql_row', :collection => @sample.sql_segments %>
 	</table>
+  <% end %>
 </div>
 
 <div id='text_dump'>

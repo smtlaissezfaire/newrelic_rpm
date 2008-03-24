@@ -31,7 +31,13 @@ class NewrelicController < ActionController::Base
       return
     end
 
-    # TODO move to a helper
+    controller_metric = @sample.root_segment.called_segments.first.metric_name
+    
+    # TODO move metric parser into the developer edition (the agent?)
+    controller_segments = controller_metric.split('/')
+    @sample_controller_name = controller_segments[1..-2].join('/').camelize+"Controller"
+    @sample_action_name = controller_segments[-1].underscore
+    
     @pie_chart = GooglePieChart.new
     @pie_chart.color = '6688AA'
     
@@ -64,6 +70,33 @@ class NewrelicController < ActionController::Base
         "Rows",
         "Extra"
       ];
+    end
+  end
+  
+  # show the selected source file with the highlighted selected line
+  def show_source
+    filename = params[:file]
+    line_number = params[:line].to_i
+    
+    file = File.new(filename, 'r')
+    @source = ""
+
+    @source << "<pre>"
+    file.each_line do |line|
+      # place an anchor 6 lines above the selected line (if the line # < 6)
+      if file.lineno == line_number - 6
+        @source << "</pre><pre id = 'selected_line'>"
+        @source << line.rstrip
+        @source << "</pre><pre>"
+       
+      # highlight the selected line
+      elsif file.lineno == line_number
+        @source << "</pre><pre class = 'selected_source_line'>"
+        @source << line.rstrip
+        @source << "</pre><pre>"
+      else
+        @source << line
+      end
     end
   end
   

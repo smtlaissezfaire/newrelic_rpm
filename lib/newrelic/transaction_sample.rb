@@ -30,9 +30,9 @@ module NewRelic
         
         s = tab.clone
         s << ">> #{metric_name}: #{@entry_timestamp.to_ms}\n"
-        if @params
+        unless params.empty?
           s << "#{tab}#{tab}{\n"
-          @params.each do |k,v|
+          params.each do |k,v|
             s << "#{tab}#{tab}#{k}: #{v}\n"
           end
           s << "#{tab}#{tab}}\n"
@@ -50,7 +50,7 @@ module NewRelic
       end
       
       def freeze
-        @params.freeze if @params
+        params.freeze
         @called_segments.each do |s|
           s.freeze
         end
@@ -75,18 +75,15 @@ module NewRelic
       def []=(key, value)
         # only create a parameters field if a parameter is set; this will save
         # bandwidth etc as most segments have no parameters
-        @params ||= {}
-        @params[key] = value
+        params[key] = value
       end
         
       def [](key)
-        return nil unless @params
-        @params[key]
+        params[key]
       end
       
       def params
-        return @params if @params
-        {}
+        @params ||= {}
       end
       
       # call the provided block for this segment and each 
@@ -112,12 +109,12 @@ module NewRelic
     
     def initialize(sample_id = nil)
       @sample_id = sample_id || object_id
+      @params = {}
     end
     
     def begin_building(start_time = Time.now)
       @start_time = start_time
       @root_segment = create_segment 0.0, "ROOT"
-      @params = {}
     end
 
     def create_segment (relative_timestamp, metric_name, segment_id = nil)
@@ -127,7 +124,7 @@ module NewRelic
     
     def freeze
       @root_segment.freeze
-      @param.freeze
+      params.freeze
       super
     end
     
@@ -140,9 +137,15 @@ module NewRelic
     end
     
     def to_s
-      "Transaction Sample collected at #{start_time}\n " + 
-        "Path: #{params[:path]} \n" +
-        @root_segment.to_debug_str(0)
+      s = "Transaction Sample collected at #{start_time}\n"
+      s << "  {\n"
+      s << "  Path: #{params[:path]} \n"
+      
+      params.each do |k,v|
+        s << "  #{k}: #{v}\n" unless k == :path
+      end
+      s << "  }\n\n"
+      s <<  @root_segment.to_debug_str(0)
     end
     
     # return a new transaction sample that treats segments
@@ -161,7 +164,22 @@ module NewRelic
       delta = build_segment_with_omissions(sample, 0.0, @root_segment, sample.root_segment, regex)
       sample.root_segment.end_trace(@root_segment.exit_timestamp - delta) 
       sample.freeze
-      sample
+    end
+    
+    # return a new transaction sample that can be sent to the RPM service.
+    # this involves potentially one or more of the following options 
+    #   :explain_sql : run EXPLAIN on all queries (extra overhead, deeper visibility)
+    #   :keep_backtraces : keep backtraces, significantly increasing size of trace (off by default)
+    #   :normalize_sql : clear sql fields of potentially sensitive values (higher overhead, better security
+    def prepare_to_send(options={})
+      sample = TransactionSample.new(sample_id)
+      sample.begin_building @start_time
+      
+      params.each {|k,v| sample.params[k] = v}
+        
+      build_segment_for_transfer(sample, @root_segment, sample.root_segment, options)
+      sample.root_segment.end_trace(@root_segment.exit_timestamp) 
+      sample.freeze
     end
     
   private
@@ -192,6 +210,35 @@ module NewRelic
       end
       
       return time_delta
+    end
+
+    # see prepare_to_send for what we do with options
+    # TODO support each of the above options before shipping (keep_backtraces is optional)
+    # TODO apply DRY to this and omit_segments_with
+    def build_segment_for_transfer(new_sample, source_segment, target_segment, options)
+      source_segment.called_segments.each do |source_called_segment|
+        target_called_segment = new_sample.create_segment(
+              source_called_segment.entry_timestamp,
+              source_called_segment.metric_name,
+              source_called_segment.segment_id)
+
+        target_segment.add_called_segment target_called_segment
+        source_called_segment.params.each do |k,v|
+          if k == :backtrace
+            target_called_segment[k]=v if options[:keep_backtraces]
+          elsif k == :sql
+            sql = v
+            # TODO normalize if requested
+            # TODO explain if requested
+            target_called_segment[k] = sql
+          else
+            target_called_segment[k]=v 
+          end
+        end
+
+        build_segment_for_transfer(new_sample, source_called_segment, target_called_segment, options)
+        target_called_segment.end_trace(source_called_segment.exit_timestamp)
+      end
     end
   end
 end

@@ -20,7 +20,7 @@ module ActionController
       
         self.class.trace_method_execution "Controller/#{path}" do 
           # send request and parameter info to the transaction sampler
-          NewRelic::Agent.instance.transaction_sampler.notice_transaction(path, params)
+          NewRelic::Agent.instance.transaction_sampler.notice_transaction(path, request, params)
         
           # run the action
           perform_action_without_newrelic_trace
@@ -40,6 +40,10 @@ module ActionController
     if method_defined? :perform_invocation
       add_method_tracer :perform_invocation, 'WebService/#{controller_name}/#{args.first}'
     end
+
+# This doesn't work well because around filters yield back to the action
+#    add_method_tracer :run_before_filters, "Controller/Before Filters"
+#    add_method_tracer :run_after_filters, "Controller/After Filters"
   
  
     # trace the number of exceptions encountered 
@@ -53,10 +57,8 @@ module ActionController
       def _determine_metric_path
         if self.class.action_methods.include?(action_name)
           "#{self.class.controller_path}/#{action_name}"
-        elsif respond_to? :method_missing
-          "#{self.class.controller_path}/(other)"
         else
-          "#{self.class.controller_path}/#{action_name}"
+          "#{self.class.controller_path}/(other)"
         end
       end
   end
