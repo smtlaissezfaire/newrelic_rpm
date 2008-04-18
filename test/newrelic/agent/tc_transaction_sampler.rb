@@ -1,7 +1,7 @@
 require 'newrelic/agent/transaction_sampler'
 require 'test/unit'
 
-::RPM_DEVELOPER = false unless defined? ::RPM_DEVELOPER
+::RPM_DEVELOPER = true unless defined? ::RPM_DEVELOPER
 
 module NewRelic 
   module Agent
@@ -15,7 +15,7 @@ module NewRelic
         run_sample_trace
         run_sample_trace
       
-        samples = @sampler.harvest_samples
+        samples = @sampler.get_samples
         assert samples.length == 4
         assert samples.first.root_segment.called_segments[0].metric_name == "a"
         assert samples.last.root_segment.called_segments[0].metric_name == "a"
@@ -59,6 +59,7 @@ module NewRelic
     private      
       def run_sample_trace(&proc)
         @sampler.notice_first_scope_push
+        @sampler.notice_transaction '/path', nil, {}
         @sampler.notice_push_scope "a"
         @sampler.notice_push_scope "ab"
         proc.call if proc

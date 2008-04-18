@@ -3,13 +3,13 @@
 		<td valign=top>
 			<table>
 				<tr>
-					<th>R/T</th>
+          <th nowrap=true>Resp Time</th>
 					<th>URL</th>
 				</tr>
 				<% @samples.each do |sample| %>
 					<tr>
-					<td align=left nowrap=true>
-						<%= stripped_sample(sample).duration.to_ms %> ms
+					<td align=right nowrap=true>
+						<%= colorize(stripped_sample(sample).duration, 1, 2) %> ms
 					</td>
 					<td>
 						<%= link_to "#{sample.params[:uri]}", :action => :view_sample, :id => sample.sample_id %>
@@ -29,7 +29,7 @@
 		<td valign=top>
 			<h3>Welcome</h3>
 			Welcome to <b>New Relic RPM Desktop Edition</b>.  This Rails extension traces the performance activity
-			of your 500 most recent controller actions in your rails application, and presents the performance
+			of your 100 most recent controller actions in your rails application, and presents the performance
 			information for your analysis.
 			<p/>
 			The url's of the most recent transactions are presented to the left, most-recent first.  Click

@@ -3,7 +3,7 @@ require 'thread'
 
 module NewRelic::Agent
   class TransactionSampler
-    def initialize(agent = nil, max_samples = 500)
+    def initialize(agent = nil, max_samples = 100)
       @samples = []
       @mutex = Mutex.new
       @max_samples = max_samples
@@ -59,8 +59,7 @@ module NewRelic::Agent
           sample = builder.sample
         
           # ensure we don't collect more than a specified number of samples in memory
-          # TODO don't keep in memory for production mode; just keep the @slowest_sample
-          @samples << sample if should_collect_sample?
+          @samples << sample if ::RPM_DEVELOPER && sample.params[:path] != nil
           @samples.shift while @samples.length > @max_samples
           
           if @slowest_sample.nil? || @slowest_sample.duration < sample.duration
@@ -91,23 +90,12 @@ module NewRelic::Agent
     
     # get the set of collected samples, merging into previous samples,
     # and clear the collected sample list. 
-    # TODO remove me, and replace with 'harvest_slowest_sample'.  Remove
-    # the @samples array in production mode, too.
-    def harvest_samples(previous_samples=[])
-      @mutex.synchronize do 
-        s = previous_samples
-        
-        @samples.each do |sample|
-          s << sample
-        end
-        @samples = [] unless is_developer_mode?
-        s
-      end
-    end
     
     def harvest_slowest_sample(previous_slowest = nil)
       slowest = @slowest_sample
       @slowest_sample = nil
+      
+      return nil unless slowest
       
       if previous_slowest.nil? || previous_slowest.duration < slowest.duration
         slowest
