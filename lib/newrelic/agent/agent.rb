@@ -106,13 +106,6 @@ module NewRelic::Agent
       @sample_threshold = (config['sample_threshold'] || 2).to_i
       @license_key = config.fetch('license_key', nil)
       
-      # make sure the license key exists and is likely to be really a license key
-      # by checking it's string length (license keys are 40 character strings.)
-      unless @license_key && @license_key.length == 40
-        log! "No license key found.  Please insert your license key into agent/newrelic.yml"
-        return
-      end
-      
       @use_ssl = config.fetch('ssl', false)
       default_port = @use_ssl ? 443 : 80
       
@@ -123,6 +116,13 @@ module NewRelic::Agent
         instrument_rails
         
         if config['enabled']
+          # make sure the license key exists and is likely to be really a license key
+          # by checking it's string length (license keys are 40 character strings.)
+          unless @license_key && @license_key.length == 40
+            log! "No license key found.  Please insert your license key into agent/newrelic.yml"
+            return
+          end
+
           load_samplers
           
           @worker_thread = Thread.new do 
@@ -222,7 +222,7 @@ module NewRelic::Agent
       sleep @connect_retry_period.to_i
       
       @agent_id = invoke_remote :launch, @local_host,
-      @local_port, determine_home_directory, $$, @launch_time
+               @local_port, determine_home_directory, $$, @launch_time
       
       log! "Connected to NewRelic Service at #{@remote_host}:#{@remote_port}."
       log.debug "Agent ID = #{@agent_id}."
@@ -351,10 +351,10 @@ module NewRelic::Agent
       @unsent_timeslice_data ||= {}
       @unsent_timeslice_data = @stats_engine.harvest_timeslice_data(@unsent_timeslice_data, @metric_ids)
       
-      metric_ids = invoke_remote :metric_data, @agent_id, 
-      @last_harvest_time.to_f, 
-      now.to_f, 
-      @unsent_timeslice_data.values
+      metric_ids = invoke_remote(:metric_data, @agent_id, 
+              @last_harvest_time.to_f, 
+              now.to_f, 
+              @unsent_timeslice_data.values)
       @metric_ids.merge! metric_ids unless metric_ids.nil?
       
       log.debug "#{Time.now}: sent #{@unsent_timeslice_data.length} timeslices (#{@agent_id})"
@@ -413,7 +413,7 @@ module NewRelic::Agent
     def invoke_remote(method, *args)
       # we currently optimize for CPU here since we get roughly a 10x reduction in
       # message size with this, and CPU overhead is at a premium.  If we wanted
-      # to go for a 20x compression instead, we could use Zlib::BEST_COMPRESSION and 
+      # to go for higher compression instead, we could use Zlib::BEST_COMPRESSION and 
       # pay a little more CPU.
       post_data = CGI::escape(Zlib::Deflate.deflate(Marshal.dump(args), Zlib::BEST_SPEED))
       
