@@ -133,7 +133,7 @@ module NewRelic::Agent
         # When the VM shuts down, attempt to send a message to the server that
         # this agent run is stopping, assuming it has successfully connected
         at_exit do
-          @worker_thread.terminate
+          @worker_thread.terminate if @worker_thread
           graceful_disconnect
         end
       end
@@ -222,7 +222,7 @@ module NewRelic::Agent
       sleep @connect_retry_period.to_i
       
       @agent_id = invoke_remote :launch, @local_host,
-               @local_port, determine_home_directory, $$, @launch_time
+               @local_port, determine_home_directory, $$, @launch_time.to_f
       
       log! "Connected to NewRelic Service at #{@remote_host}:#{@remote_port}."
       log.debug "Agent ID = #{@agent_id}."
@@ -302,15 +302,15 @@ module NewRelic::Agent
       # would "win out" as the determined runtime environment
       ObjectSpace.each_object(Thin::Server) do |thin_server|
         @environment = :thin
+        port = thin_server.port
         
-        # TODO when thin uses UNIX domain sockets, we likely don't have a port
+        # when thin uses UNIX domain sockets, we likely don't have a port
         # setting.  So therefore we need another way to uniquely define this
         # "instance", otherwise, a host running >1 thin instances will appear
         # as 1 agent to us, and we will have a license counting problem (as well
         # as a data granularity problem).
-        port = thin_server.port
        
-        if port.nil? && false     # TODO we need to make mods on the server to accept port as a string
+        if port.nil? 
           port = thin_server.socket
         end
         port
@@ -337,7 +337,7 @@ module NewRelic::Agent
       Dir.glob(instrumentation_files) do |file|
         begin
           require file
-          log.info "Processed instrumentation file '#{file.split('/').last}'"
+          log.debug "Processed instrumentation file '#{file.split('/').last}'"
         rescue Exception => e
           log.error "Error loading instrumentation file '#{file}': #{e}"
           log.debug e.backtrace.join("\n")
@@ -373,7 +373,7 @@ module NewRelic::Agent
       @slowest_sample = @transaction_sampler.harvest_slowest_sample(@slowest_sample)
       
       if @slowest_sample && @slowest_sample.duration > @sample_threshold
-        log.debug "Sending Slowest Sample: #{@slowest_sample.params[:path]}, #{@slowest_sample.duration.to_ms} ms" if @slowest_sample
+        log.info "Sending Slowest Sample: #{@slowest_sample.params[:path]}, #{@slowest_sample.duration.round_to(2)} s" if @slowest_sample
         
         # take the slowest sample, and prepare it for sending across the wire.  This includes
         # gathering SQL explanations, stripping out stack traces, and normalizing SQL.
@@ -429,7 +429,7 @@ module NewRelic::Agent
       response = request.start do |http|
         http.post(uri, post_data) 
       end
-      
+
       if response.is_a? Net::HTTPSuccess
         return_value = Marshal.load(Zlib::Inflate.inflate(CGI::unescape(response.body)))
         if return_value.is_a? Exception
@@ -474,7 +474,7 @@ module NewRelic::Agent
       if @connected
         begin
           log.debug "Sending graceful shutdown message to #{remote_host}:#{remote_port}"
-          invoke_remote :shutdown, @agent_id, Time.now 
+          invoke_remote :shutdown, @agent_id, Time.now.to_f
           log.debug "Shutdown Complete"
         rescue Exception => e
           log.warn "Error sending shutdown message to #{remote_host}:#{remote_port}:"

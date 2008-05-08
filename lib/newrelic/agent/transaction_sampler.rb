@@ -1,5 +1,6 @@
 require 'newrelic/transaction_sample'
 require 'thread'
+require 'newrelic/agent/method_tracer'
 
 module NewRelic::Agent
   class TransactionSampler
@@ -54,6 +55,7 @@ module NewRelic::Agent
     def notice_scope_empty
       with_builder do |builder|
         builder.finish_trace
+        reset_builder
       
         @mutex.synchronize do
           sample = builder.sample
@@ -66,8 +68,6 @@ module NewRelic::Agent
             @slowest_sample = sample
           end
         end
-      
-        reset_builder
       end
     end
     
@@ -77,10 +77,16 @@ module NewRelic::Agent
       end
     end
     
+    # some statements (particularly INSERTS with large BLOBS
+    # may be very large; we should trim them to a maximum usable length
+    MAX_SQL_LENGTH = 16384
     def notice_sql(sql)
       with_builder do |builder|
         segment = builder.current_segment
         if segment
+          if sql.length > MAX_SQL_LENGTH
+            sql = sql[0..MAX_SQL_LENGTH] + '...'
+          end
           current_sql = segment[:sql]
           sql = current_sql + ";\n" + sql if current_sql
           segment[:sql] = sql
@@ -92,15 +98,17 @@ module NewRelic::Agent
     # and clear the collected sample list. 
     
     def harvest_slowest_sample(previous_slowest = nil)
-      slowest = @slowest_sample
-      @slowest_sample = nil
-      
-      return nil unless slowest
-      
-      if previous_slowest.nil? || previous_slowest.duration < slowest.duration
-        slowest
-      else
-        previous_slowest
+      @mutex.synchronize do
+        slowest = @slowest_sample
+        @slowest_sample = nil
+
+        return nil unless slowest
+
+        if previous_slowest.nil? || previous_slowest.duration < slowest.duration
+          slowest
+        else
+          previous_slowest
+        end
       end
     end
 
@@ -168,7 +176,8 @@ module NewRelic::Agent
   end
 
   # a builder is created with every sampled transaction, to dynamically
-  # generate the sampled data
+  # generate the sampled data.  It is a thread-local object, and is not
+  # accessed by any other thread so no need for synchronization.
   class TransactionSampleBuilder
     attr_reader :current_segment
     
@@ -194,6 +203,17 @@ module NewRelic::Agent
     end
     
     def finish_trace
+      # This should never get called twice, but in a rare case that we can't reproduce in house it does.
+      # log forensics and return gracefully
+      if @sample.frozen?
+        log = self.class.method_tracer_log
+        
+        log.warn "Unexpected double-freeze of Transaction Trace Object."
+        log.info "Please send this diagnostic data to New Relic"
+        log.info @sample.to_s
+        return
+      end
+      
       @sample.root_segment.end_trace relative_timestamp
       @sample.freeze
       @current_segment = nil
