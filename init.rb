@@ -12,7 +12,8 @@ begin
 
   newrelic_agent_config = YAML.load(newrelic_config_file)[RAILS_ENV] || {}
   newrelic_agent_config.freeze
-
+  ::NR_CONFIG_FILE = newrelic_agent_config
+  
   ::RPM_AGENT_ENABLED = newrelic_agent_config['enabled']
   ::RPM_DEVELOPER = newrelic_agent_config['developer']
 
@@ -46,7 +47,7 @@ begin
       # inform user that the dev edition is available if we are running inside
       # a webserver process
       if agent.local_port
-        to_stderr "NewRelic Desktop Edition enabled."
+        to_stderr "NewRelic Agent (Developer Mode) enabled."
         to_stderr "To view performance information, go to http://localhost:#{agent.local_port}/newrelic"
       end
     end

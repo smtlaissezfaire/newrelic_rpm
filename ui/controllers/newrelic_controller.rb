@@ -6,6 +6,9 @@ require 'transaction_analysis'
 class NewrelicController < ActionController::Base
   include NewrelicHelper
   
+  # do not include any filters inside the application since there might be a conflict
+  skip_filter filter_chain.collect(&:filter)
+  
   # for this controller, the views are located in a different directory from
   # the application's views.
   view_path = File.join(File.dirname(__FILE__), '..', 'views')
@@ -18,6 +21,23 @@ class NewrelicController < ActionController::Base
   layout "default"
   
   write_inheritable_attribute('do_not_trace', true)
+  
+  def css
+    forward_to_file '/newrelic/stylesheets/', 'text/css'
+  end
+  
+  def image
+    forward_to_file '/newrelic/images/', params[:content_type]
+  end
+  
+  def forward_to_file(root_path = nil, content_type = nil)
+    if root_path &&  file = params[:file]
+      full_path = root_path + file
+      render :file => full_path, :use_full_path => true, :content_type => content_type
+    else
+      render :nothing => true, :status => 404
+    end
+  end
   
   def index
     get_samples
