@@ -1,12 +1,14 @@
 require 'newrelic/transaction_sample'
 require 'thread'
 require 'newrelic/agent/method_tracer'
+require 'newrelic/agent/synchronize'
 
 module NewRelic::Agent
   class TransactionSampler
+    include(Synchronize)
+    
     def initialize(agent = nil, max_samples = 100)
       @samples = []
-      @mutex = Mutex.new
       @max_samples = max_samples
 
       # when the agent is nil, we are in a unit test.
@@ -19,7 +21,7 @@ module NewRelic::Agent
     
     
     def notice_first_scope_push
-      get_or_create_builder
+      create_builder
     end
     
     def notice_push_scope(scope)
@@ -56,7 +58,7 @@ module NewRelic::Agent
         builder.finish_trace
         reset_builder
       
-        @mutex.synchronize do
+        synchronize do
           sample = builder.sample
         
           # ensure we don't collect more than a specified number of samples in memory
@@ -97,7 +99,7 @@ module NewRelic::Agent
     # and clear the collected sample list. 
     
     def harvest_slowest_sample(previous_slowest = nil)
-      @mutex.synchronize do
+      synchronize do
         slowest = @slowest_sample
         @slowest_sample = nil
 
@@ -113,21 +115,16 @@ module NewRelic::Agent
 
     # get the list of samples without clearing the list.
     def get_samples
-      @mutex.synchronize do
+      synchronize do
         return @samples.clone
       end
     end
     
     private 
       BUILDER_KEY = :transaction_sample_builder
-      def get_or_create_builder
-        builder = get_builder
-        if builder.nil?
-          builder = TransactionSampleBuilder.new
-          Thread::current[BUILDER_KEY] = builder
-        end
-        
-        builder
+
+      def create_builder
+        Thread::current[BUILDER_KEY] = TransactionSampleBuilder.new
       end
       
       # most entry points into the transaction sampler take the current transaction
