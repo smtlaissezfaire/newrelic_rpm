@@ -107,17 +107,21 @@ module NewRelic
       # returns an array of explanations (which is an array of reqults from the explain query)
       # Note this happens only for statements whose execution time exceeds a threshold (e.g. 500ms)
       # and only within the slowest transaction in a report period, selected for shipment to RPM
-      def explain_sql
+      def explain_sql        
         sql = params[:sql]
-        return nil if sql.nil? 
+        return nil if sql.nil?
         statements = sql.split(";\n")
         explanations = []
         statements.each do |statement|
           if statement.split($;, 2)[0].upcase == 'SELECT'
             explanation = []
             begin
-              result = ActiveRecord::Base.connection.execute("EXPLAIN #{statement}")
-              result.each {|row| explanation << row }
+              connection = NewRelic::TransactionSample.get_connection(params[:connection_config])        
+
+        	    if connection
+	              result = connection.execute("EXPLAIN #{statement}")
+  	            result.each {|row| explanation << row }
+  	          end
             rescue
               x = 1 # this is here so that code coverage knows we've entered this block
               # swallow failed attempts to run an explain.  One example of a failure is the
@@ -144,7 +148,38 @@ module NewRelic
     class << self
       def obfuscate_sql(sql)
         NewRelic::Agent.instance.obfuscator.call(sql) 
-      end      
+      end
+      
+      
+      def get_connection(config)
+        @@connections ||= {}
+        
+        connection = @@connections[config]
+        
+        return connection if connection
+        
+        begin
+          connection = ActiveRecord::Base.send("#{config[:adapter]}_connection", config)
+          @@connections[config] = connection
+        rescue => e
+          NewRelic::Agent.agent.log.error("Caught exception #{e} trying to get connection to DB for explain. Config: #{config}")
+          NewRelic::Agent.agent.log.error(e.backtrace.join("\n"))
+          nil
+        end
+      end
+      
+      def close_connections
+        @@connections ||= {}
+        @@connections.values.each do |connection|
+          begin
+            connection.disconnect!
+          rescue
+          end
+        end
+        
+        @@connections = {}
+      end
+      
     end
         
 
@@ -156,6 +191,7 @@ module NewRelic
     def initialize(sample_id = nil)
       @sample_id = sample_id || object_id
       @params = {}
+      @params[:request_params] = {}
     end
     
     def begin_building(start_time = Time.now)
@@ -223,8 +259,13 @@ module NewRelic
       sample.begin_building @start_time
       
       params.each {|k,v| sample.params[k] = v}
-        
-      build_segment_for_transfer(sample, @root_segment, sample.root_segment, options)
+      
+      begin
+        build_segment_for_transfer(sample, @root_segment, sample.root_segment, options)
+      ensure
+        self.class.close_connections
+      end
+      
       sample.root_segment.end_trace(@root_segment.exit_timestamp) 
       sample.freeze
     end
@@ -277,12 +318,14 @@ module NewRelic
             sql = v
 
             # run an EXPLAIN on this sql if specified.
-            if options[:explain_sql] && source_called_segment.duration > options[:explain_sql].to_f
+            if options[:explain_enabled] && options[:explain_sql] && source_called_segment.duration > options[:explain_sql].to_f
               target_called_segment[:explanation] = source_called_segment.explain_sql
             end
             
-            target_called_segment[k]=sql if options[:send_raw_sql]
-            target_called_segment[:sql_obfuscated] = TransactionSample.obfuscate_sql(sql) if !options[:send_raw_sql]
+            target_called_segment[:sql]=sql if options[:record_sql] == :raw
+            target_called_segment[:sql_obfuscated] = TransactionSample.obfuscate_sql(sql) if options[:record_sql] == :obfuscated
+          elsif k == :connection_config
+            # don't copy it
           else
             target_called_segment[k]=v 
           end

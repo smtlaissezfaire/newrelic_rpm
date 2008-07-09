@@ -73,7 +73,7 @@ module NewRelic::Agent
     #    end
     # 
     def set_sql_obfuscator(type = :replace, &block)
-      agent.set_sql_obfuscator type, block
+      agent.set_sql_obfuscator type, &block
     end
     
     
@@ -93,6 +93,13 @@ module NewRelic::Agent
       ensure
         agent.set_record_sql(state)
       end
+    end
+    
+    
+    # Add parameters to the current transaction trace
+    #
+    def add_request_parameters(params = {})
+      agent.transaction_sampler.add_request_parameters(params)
     end
     
   end
@@ -124,6 +131,7 @@ module NewRelic::Agent
     attr_reader :config
     attr_reader :remote_host
     attr_reader :remote_port
+    attr_reader :record_sql
     attr_reader :local_port
     
     # Start up the agent, which will connect to the newrelic server and start 
@@ -152,16 +160,18 @@ module NewRelic::Agent
       @worker_loop = WorkerLoop.new(@log)
       @started = true
       
-      @sample_threshold = (config['sample_threshold'] || 2).to_i
       @license_key = config.fetch('license_key', nil)
       
       sampler_config = config.fetch('transaction_tracer', {})
       
       @use_transaction_sampler = sampler_config.fetch('enabled', false)
-      @send_raw_sql = sampler_config.fetch('send_raw_sql', false)
+      @record_sql = sampler_config.fetch('record_sql', :obfuscated).intern
+      @slowest_transaction_threshold = sampler_config.fetch('transaction_threshold', '2.0').to_f
+      @explain_threshold = sampler_config.fetch('explain_threshold', '0.5').to_f
+      @explain_enabled = sampler_config.fetch('explain_enabled', true)
       
       log.info "Transaction tracer enabled: #{@use_transaction_sampler}"
-      log.warn "Agent is configured to send raw SQL to RPM service" if @send_raw_sql
+      log.warn "Agent is configured to send raw SQL to RPM service" if @record_sql == :raw
       
       @use_ssl = config.fetch('ssl', false)
       default_port = @use_ssl ? 443 : 80
@@ -169,6 +179,11 @@ module NewRelic::Agent
       @remote_host = config.fetch('host', 'collector.newrelic.com')
       @remote_port = config.fetch('port', default_port)
       
+      @proxy_host = config.fetch('proxy_host', nil)
+      @proxy_port = config.fetch('proxy_port', nil)
+      @proxy_user = config.fetch('proxy_user', nil)
+      @proxy_pass = config.fetch('proxy_pass', nil)
+
       enabled = force_enable || config['enabled']
       
       if enabled
@@ -215,7 +230,7 @@ module NewRelic::Agent
       prev || true
     end
     
-    def set_sql_obfuscator(type, block)
+    def set_sql_obfuscator(type, &block)
       if type == :before
         @obfuscator = ChainedCall.new(block, @obfuscator)
       elsif type == :after
@@ -404,6 +419,7 @@ module NewRelic::Agent
       if RUBY_PLATFORM =~ /java/
         # Check for JRuby environment.  Not sure how this works in different appservers
         require 'java'
+        require 'jruby'
         @environment = :jruby
         return java.lang.System.identityHashCode(JRuby.runtime)
       end
@@ -480,14 +496,14 @@ module NewRelic::Agent
     def harvest_and_send_slowest_sample
       @slowest_sample = @transaction_sampler.harvest_slowest_sample(@slowest_sample)
       
-      if @slowest_sample && @slowest_sample.duration > @sample_threshold
+      if @slowest_sample && @slowest_sample.duration > @slowest_transaction_threshold
         log.debug "Sending slowest sample: #{@slowest_sample.params[:path]}, #{@slowest_sample.duration.round_to(2)} s" if @slowest_sample
         
         # take the slowest sample, and prepare it for sending across the wire.  This includes
         # gathering SQL explanations, stripping out stack traces, and normalizing SQL.
         # note that we explain only the sql statements whose segments' execution times exceed 
         # our threshold (to avoid unnecessary overhead of running explains on fast queries.)
-        sample = @slowest_sample.prepare_to_send(:explain_sql => 0.5, :send_raw_sql => @send_raw_sql)
+        sample = @slowest_sample.prepare_to_send(:explain_sql => @explain_threshold, :record_sql => @record_sql, :explain_enabled => @explain_enabled)
 
         invoke_remote :transaction_sample_data, @agent_id, sample
       end
@@ -526,7 +542,8 @@ module NewRelic::Agent
       # pay a little more CPU.
       post_data = CGI::escape(Zlib::Deflate.deflate(Marshal.dump(args), Zlib::BEST_SPEED))
       
-      request = Net::HTTP.new(@remote_host, @remote_port.to_i) 
+      # Proxy returns regular HTTP if @proxy_host is nil (the default)
+      request = Net::HTTP::Proxy(@proxy_host, @proxy_port, @proxy_user, @proxy_pass).new(@remote_host, @remote_port.to_i)
       if @use_ssl
         request.use_ssl = true 
         request.verify_mode = OpenSSL::SSL::VERIFY_NONE
