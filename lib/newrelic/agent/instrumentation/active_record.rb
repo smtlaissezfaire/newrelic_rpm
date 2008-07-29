@@ -43,7 +43,7 @@ module ActiveRecord
         # we check scope_depth vs 2 since the controller is 1, and the 
         #      
         if NewRelic::Agent.instance.transaction_sampler.scope_depth < 2
-          self.class.trace_method_execution "Database/DirectSQL", true, true do
+          self.class.trace_method_execution "Database/DirectSQL", true, true, true do
             log_with_capture_sql(sql, name, &block)
           end
         else
@@ -73,7 +73,7 @@ module ActiveRecord
       alias_method :log, :log_with_newrelic_instrumentation
       protected :log
       
-      #      add_method_tracer :log, 'Database/#{adapter_name}/#{args[1]}', :metric => false
+      add_method_tracer :log, 'Database/#{adapter_name}/#{args[1]}', :metric => false
       add_method_tracer :log, 'Database/all', :push_scope => false
       
     end
