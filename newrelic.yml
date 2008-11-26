@@ -3,14 +3,20 @@
 # applications with deep visibility and low overhead.  For more information, 
 # visit www.newrelic.com.
 #
-# #{generated_for_user}
+# <%= generated_for_user %>
 #
 # here are the settings that are common to all environments
 common: &default_settings
   # ============================== LICENSE KEY ===============================
   # You must specify the licence key associated with your New Relic account.
   # This key binds your Agent's data to your account in the New Relic RPM service.
-  license_key: '#{license_key}'
+  license_key: '<%= license_key %>'
+  
+  # Application Name
+  # For Passenger, JRuby, and Litespeed, if you host multiple applications on a
+  # single host, then define an application name for each app. If you don't do
+  # this, then all instances reporting from a host have their data aggregated.
+  # app_name: <your app name>
 
   # the 'enabled' setting is used to turn on the NewRelic Agent.  When false,
   # your application is not instrumented and the Agent does not start up or
@@ -55,11 +61,10 @@ common: &default_settings
   # transactions and sends this to the RPM service once a minute. Included in the
   # transaction is the exact call sequence of the transactions including any SQL statements
   # issued.
-  #
   transaction_tracer:
   
     # Transaction tracer is enabled by default. Set this to false to turn it off. This feature
-    # is available at the Advanced and Pro RPM product levels only.
+    # is only available at the Silver and above product levels.
     enabled: true
   
  
@@ -68,10 +73,28 @@ common: &default_settings
     # original form, and "obfuscated", which strips out numeric and string literals
     record_sql: obfuscated
     
-  # To stop specific errors from reporting to RPM, set this property to comma separated 
-  # values
-  #
-  #ignore_errors: ActionController::RoutingError, ...
+    # Threshold in seconds for when to collect stack trace for a SQL call. In other words, 
+    # when SQL statements exceed this threshold, then capture and send to RPM the current
+    # stack trace. This is helpful for pinpointing where long SQL calls originate from  
+    stack_trace_threshold: 0.500
+  
+  # Error collector captures information about uncaught exceptions and sends them to RPM for
+  # viewing
+  error_collector:
+    
+    # Error collector is enabled by default. Set this to false to turn it off. This feature
+    # is only available at the Silver and above product levels
+    enabled: true
+    
+    # Tells error collector whether or not to capture a source snippet around the place of the
+    # error when errors are View related.
+    capture_source: true    
+    
+    # To stop specific errors from reporting to RPM, set this property to comma separated 
+    # values
+    #
+    #ignore_errors: ActionController::RoutingError, ...
+
 
 # override default settings based on your application's environment
 

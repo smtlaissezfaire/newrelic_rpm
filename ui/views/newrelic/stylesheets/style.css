@@ -1,3 +1,5 @@
+
+
 /*  
 Originally based on the theme credited below.
 Tweaks by Lew Cirne for Seldon
@@ -28,7 +30,7 @@ body{
 	width:76em;	
 }
 #content{
-	width: 984;
+	width: 984px;
 	margin: 10px auto;
 	text-align:left;
 }
@@ -223,6 +225,14 @@ div.flash.notice
 	margin-right: 15px;
 }
 
+.application_stack_trace, .full_stack_trace
+{	
+	font-family: monospace;
+	margin-top: 10px;
+	margin-left: 20px;
+	max-width: 950px;
+	overflow: auto;
+}
 
 #summary_table
 {
@@ -234,6 +244,12 @@ div.flash.notice
 	overflow: auto;
 }
 
+.plan
+{
+    font-family: monospace;
+    font-size: 0.8em;
+    white-space: pre;
+}
 #page_nav
 {
 	height: 42px;

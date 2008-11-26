@@ -1,7 +1,7 @@
 require 'pathname'
-
+require 'new_relic/agent/collection_helper'
 module NewrelicHelper
-  
+  include NewRelic::Agent::CollectionHelper
   # return the host that serves static content (css, metric documentation, images, etc)
   # that supports the desktop edition.
   def server
@@ -21,6 +21,7 @@ module NewrelicHelper
   # return the highest level in the call stack for the trace that is not rails or 
   # newrelic agent code
   def application_caller(trace)
+    trace = clean_backtrace(trace)
     trace.each do |trace_line|
       file = file_and_line(trace_line).first
       unless exclude_file_from_stack_trace?(file, false)
@@ -31,6 +32,7 @@ module NewrelicHelper
   end
   
   def application_stack_trace(trace, include_rails = false)
+    trace = clean_backtrace(trace)
     trace.reject do |trace_line|
       file = file_and_line(trace_line).first
       exclude_file_from_stack_trace?(file, include_rails)
@@ -74,16 +76,24 @@ module NewrelicHelper
   
   # write the metric label for a segment metric in the detail view
   def write_segment_label(segment)
-    if segment[:backtrace] && (source_url = url_for_source(application_caller(segment[:backtrace])))
+    if source_available && segment[:backtrace] && (source_url = url_for_source(application_caller(segment[:backtrace])))
       link_to dev_name(segment.metric_name), source_url
     else
       dev_name(segment.metric_name)
     end
   end
   
+  def source_available
+    true
+  end
+  
   # write the metric label for a segment metric in the summary table of metrics
   def write_summary_segment_label(segment)
     dev_name(segment.metric_name)
+  end
+  
+  def write_stack_trace_line(trace_line)
+    link_to h(trace_line), url_for_source(trace_line)
   end
 
   # write a link to the source for a trace
@@ -199,14 +209,18 @@ module NewrelicHelper
     { :onmouseover => "sql_mouse_over(#{segment.segment_id})", :onmouseout => "sql_mouse_out(#{segment.segment_id})"}
   end
   
+  def explain_sql_link(segment, child_sql = false)
+    link_to 'SQL', explain_sql_url(segment), sql_link_mouseover_options(segment)
+  end
+  
   def explain_sql_links(segment)
     if segment[:sql_obfuscated] || segment[:sql]
-      link_to 'SQL', explain_sql_url(segment), sql_link_mouseover_options(segment)
+      explain_sql_link segment
     else
       links = []
       segment.called_segments.each do |child|
         if child[:sql_obfuscated] || child[:sql]
-          links << link_to('SQL', explain_sql_url(child), sql_link_mouseover_options(child))
+          links << explain_sql_link(child, true)
         end
       end
       links[0..1].join(', ') + (links.length > 2?', ...':'')
@@ -244,15 +258,13 @@ private
   end
     
   def exclude_file_from_stack_trace?(file, include_rails)
-    is_agent = file =~ /\/newrelic\/agent\//
-    return is_agent if include_rails
-    
-    is_agent ||
+    !include_rails && (
       file =~ /\/active(_)*record\// ||
       file =~ /\/action(_)*controller\// ||
       file =~ /\/activesupport\// ||
+      file =~ /\/lib\/mongrel/ ||
       file =~ /\/actionpack\// ||
-      file !~ /\.rb/                  # must be a .rb file, otherwise it's a script of something else...we could have gotten trickier and tried to see if this file exists...
+      file !~ /\.rb/)                  # must be a .rb file, otherwise it's a script of something else...we could have gotten trickier and tried to see if this file exists...
   end
   
   def show_view_link(title, page_name)
