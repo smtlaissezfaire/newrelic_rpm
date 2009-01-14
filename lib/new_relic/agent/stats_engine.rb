@@ -58,7 +58,6 @@ module NewRelic::Agent
     
     def add_scope_stack_listener(l)
       fail "Can't add a scope listener midflight in a transaction" if scope_stack.any?
-#      fail "Can't add more than one scope stack listener" if @scope_stack_listener
       @scope_stack_listener =  l
     end
     
@@ -133,7 +132,9 @@ module NewRelic::Agent
     def lookup_stat(metric_name)
       return @stats_hash[metric_name]
     end
-    
+    def metrics
+      return @stats_hash.keys
+    end
     
     def get_stats_no_scope(metric_name)
       stats = @stats_hash[metric_name]
@@ -199,7 +200,7 @@ module NewRelic::Agent
         
         # don't bother collecting and reporting stats that have zero-values for this timeslice.
         # significant performance boost and storage savings.
-        unless stats_copy.call_count == 0
+        unless stats_copy.call_count == 0 && stats_copy.total_call_time == 0.0 && stats_copy.total_exclusive_time == 0.0
           
           metric_spec_for_transport = (metric_ids[metric_spec].nil?) ? metric_spec : nil
           

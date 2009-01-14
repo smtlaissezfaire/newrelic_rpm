@@ -4,6 +4,13 @@ require 'google_pie_chart'
 class NewrelicController < ActionController::Base
   include NewrelicHelper
   
+  # See http://wiki.rubyonrails.org/rails/pages/Safe+ERB:
+  # We don't need to worry about checking taintedness
+  def initialize(*args)
+    @skip_checking_tainted = true
+    super *args
+  end
+  
   # do not include any filters inside the application since there might be a conflict
   if respond_to? :filter_chain
     filters = filter_chain.collect do |f|
@@ -47,7 +54,7 @@ class NewrelicController < ActionController::Base
     forward_to_file '/newrelic/javascript/', 'text/javascript'
   end
   
-
+  
   
   def index
     get_samples
@@ -70,7 +77,7 @@ class NewrelicController < ActionController::Base
     get_segment
     
     render :action => "sample_not_found" and return unless @sample 
-
+    
     @sql = @segment[:sql]
     @trace = @segment[:backtrace]
     
@@ -110,7 +117,7 @@ class NewrelicController < ActionController::Base
       return
     end
     @source = ""
-
+    
     @source << "<pre>"
     file.each_line do |line|
       # place an anchor 6 lines above the selected line (if the line # < 6)
@@ -118,8 +125,8 @@ class NewrelicController < ActionController::Base
         @source << "</pre><pre id = 'selected_line'>"
         @source << line.rstrip
         @source << "</pre><pre>"
-       
-      # highlight the selected line
+        
+        # highlight the selected line
       elsif file.lineno == line_number
         @source << "</pre><pre class = 'selected_source_line'>"
         @source << line.rstrip
@@ -130,12 +137,23 @@ class NewrelicController < ActionController::Base
     end
   end
   
-private 
-
+  private 
+  
   # root path is relative to plugin newrelic_rpm/ui/views directory.
-  def forward_to_file(root_path, content_type)
-    render :file => File.expand_path(File.join(__FILE__,"../../views", root_path, params[:file])),
-           :content_type => content_type
+  def forward_to_file(root_path, content_type='ignored anyway')
+    file = File.expand_path(File.join(__FILE__,"../../views", root_path, params[:file]))
+    last_modified = File.mtime(file)
+    date_check = request.respond_to?(:headers) ? request.headers['if-modified-since'] : request.env['HTTP_IF_MODIFIED_SINCE']
+    if date_check && Time.parse(date_check) >= last_modified
+      expires_in 24.hours
+      head :not_modified, 
+      :last_modified => last_modified,
+      :type => 'text/plain'
+    else
+      response.headers['Last-Modified'] = last_modified
+      expires_in 24.hours
+      send_file file, :content_type => mime_type_from_extension(file), :disposition => 'inline' #, :filename => File.basename(file)
+    end
   end
   
   def show_sample_data
@@ -180,5 +198,3 @@ private
     @segment = @sample.find_segment(segment_id)
   end
 end
-
-
