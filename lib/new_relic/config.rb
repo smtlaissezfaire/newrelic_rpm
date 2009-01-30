@@ -1,21 +1,28 @@
 require 'yaml'
 #require 'new_relic/version'
 require 'singleton'
-require 'new_relic/agent'
 require 'erb'
+require 'net/https'
 
 # Configuration supports the behavior of the agent which is dependent
 # on what environment is being monitored: rails, merb, ruby, etc
 # It is an abstract factory with concrete implementations under
 # the config folder.
 module NewRelic
+  
   class Config
+    
+    # Structs holding info for the remote server and proxy server 
+    class Server < Struct.new :host, :port
+      def to_s; "#{host}:#{port}"; end
+    end
+    
+    ProxyServer = Struct.new :host, :port, :user, :password
     
     def self.instance
       @instance ||= new_instance
     end
     
-    attr_reader :settings
     
     
     @settings = nil
@@ -40,9 +47,26 @@ module NewRelic
     def [](key)
       fetch(key)
     end
+    ####################################
+    def env=(env_name)
+      @env = env_name
+      @settings = @yaml[env_name]
+    end
+    
+    def settings
+      @settings ||= (@yaml && @yaml[env]) || {}
+    end
+    
+    def []=(key, value)
+      settings[key] = value
+    end
+
+    def set_config(key,value)
+      self[key]=value
+    end
     
     def fetch(key, default=nil)
-      @settings[key].nil? ? default : @settings[key]
+      settings[key].nil? ? default : settings[key]
     end
     
     ###################################
@@ -65,10 +89,44 @@ module NewRelic
       fetch('app_name', nil)
     end
     
+    def use_ssl?
+      @use_ssl ||= fetch('ssl', false)
+    end
+
+    def server
+      @remote_server ||= 
+      NewRelic::Config::Server.new fetch('host', 'collector.newrelic.com'), fetch('port', use_ssl? ? 443 : 80).to_i  
+    end
+    
+    def api_server
+      @api_server ||= 
+      NewRelic::Config::Server.new fetch('api_host', 'rpm.newrelic.com'), fetch('api_port', fetch('port', use_ssl? ? 443 : 80)).to_i
+    end
+    
+    def proxy_server
+      @proxy_server ||=
+      NewRelic::Config::ProxyServer.new fetch('proxy_host', nil), fetch('proxy_port', nil),
+      fetch('proxy_user', nil), fetch('proxy_pass', nil)
+    end      
+    
+    # Return the Net::HTTP with proxy configuration given the NewRelic::Config::Server object.
+    # Default is the collector but for api calls you need to pass api_server
+    def http_connection(host = server)
+      # Proxy returns regular HTTP if @proxy_host is nil (the default)
+      http = Net::HTTP::Proxy(proxy_server.host, proxy_server.port, 
+                              proxy_server.user, proxy_server.password).new(host.host, host.port)
+      if use_ssl?
+        http.use_ssl = true 
+        http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+      end
+      http
+    end
+    
     def to_s
       puts self.inspect
       "Config[#{self.app}]"
     end
+    
     def log
       # If we try to get a log before one has been set up, return a stdout log
       unless @log
@@ -103,7 +161,7 @@ module NewRelic
     end
     
     def local_env
-      @env ||= NewRelic::LocalEnvironment.new
+      @local_env ||= NewRelic::LocalEnvironment.new
     end
     
     # send the given message to STDERR so that it shows
@@ -145,6 +203,7 @@ module NewRelic
     end
     
     def log_file_name(identifier="")
+      identifier ||= ""
       "newrelic_agent.#{identifier.gsub(/[^-\w.]/, '_')}.log"
     end
     
@@ -179,12 +238,13 @@ module NewRelic
         yml_file = File.expand_path(File.join(__FILE__,"..","..","..","newrelic.yml"))
         yaml = ::ERB.new(File.read(yml_file)).result(binding)
         log! "Cannot find newrelic.yml file at #{config_file}."
+        log! "Be sure to run this from the app root dir."
         log! "Using #{yml_file} file."
         log! "Signup at rpm.newrelic.com to get a newrelic.yml file configured for a free Lite account."
       else
         yaml = ERB.new(File.read(config_file)).result(binding)
       end
-      @settings = YAML.load(yaml)[env] || {}
+      @yaml = YAML.load(yaml)
     rescue ScriptError, StandardError => e
       puts e
       puts e.backtrace.join("\n")

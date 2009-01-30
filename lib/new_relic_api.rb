@@ -105,7 +105,9 @@ module NewRelicApi
       end
       
       def site_url
-        "http#{'s' if (NewRelicApi.ssl || NewRelic::Config.instance['ssl'])}://#{NewRelicApi.host || NewRelic::Config.instance['host']}:#{NewRelicApi.port || NewRelic::Config.instance['port']}"
+        host = NewRelicApi.host || NewRelic::Config.instance.api_server.host
+        port = NewRelicApi.port || NewRelic::Config.instance.api_server.port
+        "#{port == 443 ? 'https' : 'http'}://#{host}:#{port}"
       end
       
       def reset!
@@ -245,31 +247,4 @@ module NewRelicApi
   end
   
 end
-if (__FILE__ == $0) || ($0 =~ /script\/runner$/)
-  # Run the command given by the first argument.  Right
-  # now all we have is deployments. We hope to have other
-  # kinds of events here later
-  command = "(no command given)"
-  extra = [command]
-  ARGV.options do |opts|
-    script_name = File.basename($0)
-    opts.banner = "Usage: #{__FILE__} command [options]"
-    
-    opts.separator ""
-    
-    opts.on("-e", "--environment=name", String,
-          "Specifies the environment for the runner to operate under (test/development/production).",
-          "Default: development")
-    
-    extra = opts.order!
-  end
-  command = extra.shift
-  begin
-    require "new_relic/api/#{command}"
-    command_class = NewRelic::API.const_get(command.camelize) 
-  rescue
-    STDERR.puts "Unknown command: #{command}"
-    exit 1
-  end
-  command_class.new(extra).run
-end
+
