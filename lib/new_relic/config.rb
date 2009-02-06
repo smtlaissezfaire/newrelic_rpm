@@ -11,6 +11,8 @@ require 'net/https'
 module NewRelic
   
   class Config
+
+    attr_accessor :log_file
     
     # Structs holding info for the remote server and proxy server 
     class Server < Struct.new :host, :port
@@ -137,8 +139,8 @@ module NewRelic
     end
     
     def setup_log(identifier)
-      log_file = "#{log_path}/#{log_file_name(identifier)}"
-      @log = Logger.new log_file
+      @log_file = "#{log_path}/#{log_file_name(identifier)}"
+      @log = Logger.new @log_file
       
       # change the format just for our logger
       
@@ -148,15 +150,13 @@ module NewRelic
       
       # set the log level as specified in the config file
       case fetch("log_level","info").downcase
-        when "debug": @log.level = Logger::DEBUG
-        when "info": @log.level = Logger::INFO
-        when "warn": @log.level = Logger::WARN
-        when "error": @log.level = Logger::ERROR
-        when "fatal": @log.level = Logger::FATAL
+        when "debug"; @log.level = Logger::DEBUG
+        when "info"; @log.level = Logger::INFO
+        when "warn"; @log.level = Logger::WARN
+        when "error"; @log.level = Logger::ERROR
+        when "fatal"; @log.level = Logger::FATAL
       else @log.level = Logger::INFO
       end
-      log! "New Relic RPM Agent #{NewRelic::VERSION::STRING} Initialized: pid = #{$$}"
-      log! "Agent Log is found in #{log_file}"
       @log
     end
     

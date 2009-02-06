@@ -6,10 +6,6 @@ require 'singleton'
 require 'zlib'
 require 'stringio'
 
-
-# This must be turned off before we ship
-VALIDATE_BACKGROUND_THREAD_LOADING = false
-
 # The NewRelic Agent collects performance data from ruby applications in realtime as the
 # application runs, and periodically sends that data to the NewRelic server.
 module NewRelic::Agent
@@ -171,13 +167,15 @@ module NewRelic::Agent
     def start(environment, identifier, force=false)
       
       if @started
-        log! "Agent Started Already!"
+        config.log! "Agent Started Already!"
         return
       end
       @environment = environment
       @identifier = identifier && identifier.to_s
       if @identifier
         start_reporting(force)
+        config.log! "New Relic RPM Agent #{NewRelic::VERSION::STRING} Initialized: pid = #{$$}"
+        config.log! "Agent Log is found in #{NewRelic::Config.instance.log_file}"
         return true
       else
         return false
@@ -323,7 +321,7 @@ module NewRelic::Agent
           # note if the agent attempts to report more frequently than the specified
           # report data, then it will be ignored.
           
-          log! "Reporting performance data every #{@report_period} seconds"        
+          config.log! "Reporting performance data every #{@report_period} seconds"        
           @worker_loop.add_task(@report_period) do 
             harvest_and_send_timeslice_data
           end
@@ -358,22 +356,21 @@ module NewRelic::Agent
       
       @worker_loop = WorkerLoop.new(log)
       
-      if VALIDATE_BACKGROUND_THREAD_LOADING
+      if config['check_bg_loading']
         require 'new_relic/agent/patch_const_missing'
-        self.class.newrelic_enable_warning
+        log.warn "Agent background loading checking turned on"
+        ClassLoadingWatcher.enable_warning
       end
       
       @worker_thread = Thread.new do
         begin
-          if VALIDATE_BACKGROUND_THREAD_LOADING
-            self.class.newrelic_set_agent_thread(Thread.current)
-          end          
+          ClassLoadingWatcher.set_background_thread(Thread.current) if config['check_bg_loading']
           run_worker_loop
         rescue IgnoreSilentlyException
-          log! "Unable to establish connection with the server.  Run with log level set to debug for more information."
+          config.log! "Unable to establish connection with the server.  Run with log level set to debug for more information."
         rescue StandardError => e
-          log! e
-          log! e.backtrace.join("\n")
+          config.log! e
+          config.log! e.backtrace.join("\n")
         end
       end
       
@@ -381,7 +378,7 @@ module NewRelic::Agent
       # by stopping the foreground thread after the background thread is created. Turn on dependency loading logging
       # and make sure that no loading occurs.
       #
-      #      log! "FINISHED AGENT INIT"
+      #      config.log! "FINISHED AGENT INIT"
       #      while true
       #        sleep 1
       #      end
@@ -438,7 +435,7 @@ module NewRelic::Agent
       # make sure the license key exists and is likely to be really a license key
       # by checking it's string length (license keys are 40 character strings.)
       if @prod_mode_enabled && (!@license_key || @license_key.length != 40)
-        log! "No license key found.  Please edit your newrelic.yml file and insert your license key"
+        config.log! "No license key found.  Please edit your newrelic.yml file and insert your license key"
         return
       end
       
@@ -504,7 +501,7 @@ module NewRelic::Agent
             config.settings
         @report_period = invoke_remote :get_data_report_period, @agent_id
  
-        log! "Connected to NewRelic Service at #{config.server}"
+        config.log! "Connected to NewRelic Service at #{config.server}"
         log.debug "Agent ID = #{@agent_id}."
         
         # Ask the server for permission to send transaction samples.  determined by subscription license.
@@ -519,8 +516,8 @@ module NewRelic::Agent
         @connected = true
         
       rescue LicenseException => e
-        log! e.message, :error
-        log! "Visit NewRelic.com to obtain a valid license key, or to upgrade your account."
+        config.log! e.message, :error
+        config.log! "Visit NewRelic.com to obtain a valid license key, or to upgrade your account."
         @invalid_license = true
         return false
         
@@ -576,12 +573,12 @@ module NewRelic::Agent
       @harvest_thread ||= Thread.current
       
       if @harvest_thread != Thread.current
-        log! "ERROR - two harvest threads are running (current=#{Thread.current}, havest=#{@harvest_thread}"
+        config.log! "ERROR - two harvest threads are running (current=#{Thread.current}, havest=#{@harvest_thread}"
         @harvest_thread = Thread.current
       end
       
       # Fixme: remove this check
-      log! "Agent sending data too frequently - #{now - @last_harvest_time} seconds" if (now.to_f - @last_harvest_time.to_f) < 45
+      config.log! "Agent sending data too frequently - #{now - @last_harvest_time} seconds" if (now.to_f - @last_harvest_time.to_f) < 45
       
       @unsent_timeslice_data ||= {}
       @unsent_timeslice_data = @stats_engine.harvest_timeslice_data(@unsent_timeslice_data, @metric_ids)
@@ -697,9 +694,9 @@ module NewRelic::Agent
         raise IgnoreSilentlyException
       end 
     rescue ForceDisconnectException => e
-      log! "RPM forced this agent to disconnect", :error
-      log! e.message, :error
-      log! "Restart this process to resume RPM's agent communication with NewRelic.com"
+      config.log! "RPM forced this agent to disconnect", :error
+      config.log! e.message, :error
+      config.log! "Restart this process to resume RPM's agent communication with NewRelic.com"
       # when a disconnect is requested, stop the current thread, which is the worker thread that 
       # gathers data and talks to the server. 
       @connected = false
@@ -708,14 +705,6 @@ module NewRelic::Agent
       # These include Errno connection errors 
       log.debug "Recoverable error connecting to the server: #{e}"
       raise IgnoreSilentlyException
-    end
-    
-    # send the given message to STDERR as well as the agent log, so that it shows
-    # up in the console.  This should be used for important informational messages at boot
-    def log!(msg, level = :info)
-      # only log to stderr when we are running as a mongrel process, so it doesn't
-      # muck with daemons and the like.
-      config.log!(msg, level)
     end
     
     def graceful_disconnect
