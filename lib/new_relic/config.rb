@@ -3,6 +3,7 @@ require 'new_relic/local_environment'
 require 'singleton'
 require 'erb'
 require 'net/https'
+require 'logger'
 
 # Configuration supports the behavior of the agent which is dependent
 # on what environment is being monitored: rails, merb, ruby, etc
@@ -12,7 +13,7 @@ module NewRelic
   
   class Config
 
-    attr_accessor :log_file
+    attr_accessor :log_file, :env
     
     # Structs holding info for the remote server and proxy server 
     class Server < Struct.new :host, :port
@@ -50,13 +51,12 @@ module NewRelic
       fetch(key)
     end
     ####################################
-    def env=(env_name)
-      @env = env_name
-      @settings = @yaml[env_name]
-    end
-    
     def settings
-      @settings ||= (@yaml && @yaml[env]) || {}
+      if @settings.nil?
+        @settings = (@yaml && @yaml[env]) || {}
+        @settings['apdex_t'] ||= 1.0
+      end
+      @settings
     end
     
     def []=(key, value)

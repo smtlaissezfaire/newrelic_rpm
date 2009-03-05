@@ -3,7 +3,7 @@ module NewRelic
   module VERSION #:nodoc:
   MAJOR = 2
   MINOR = 8
-  TINY  = 4
+  TINY  = 5
   STRING = [MAJOR, MINOR, TINY].join('.')
   def self.changes
     puts "NewRelic RPM Plugin Version: #{NewRelic::VERSION::STRING}"
@@ -11,7 +11,14 @@ module NewRelic
   end
 
   CHANGELOG = <<EOF
-
+2009-02-22 version 2.8.5
+  * fix reference to CommandError which was breaking some cap scripts
+  * fix incompatibility with Rails 2.0 in the server API
+  * fix problem with litespeed with Lite accounts
+  * fix problem when ActiveRecord is disabled
+  * moved merb instrumentation to Merb::Controller instead of 
+    AbstractController to address incompatibility with MailController
+  * fix problem in devmode displaying sql with embedded urls
 2009-02-17 version 2.8.4
   * fix bug detecting Phusion Passenger v 2.1.0
   * fix bug in capistrano recipe causing cap commands to fail with error

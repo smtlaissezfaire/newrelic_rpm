@@ -304,7 +304,7 @@ module NewRelic::Agent
     end
     
     def apdex_t
-      @apdex_t ||= (config['apdex_t'] || 2.0).to_f
+      @apdex_t ||= config['apdex_t'].to_f
     end    
         
     private
@@ -466,7 +466,7 @@ module NewRelic::Agent
       @transaction_sampler = NewRelic::Agent::TransactionSampler.new(self)
       @error_collector = NewRelic::Agent::ErrorCollector.new(self)
       
-      @request_timeout = 15 * 60
+      @request_timeout = NewRelic::Config.instance.fetch('timeout', 2 * 60)
       
       @invalid_license = false
       
