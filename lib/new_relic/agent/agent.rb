@@ -176,6 +176,9 @@ module NewRelic::Agent
       @identifier = identifier && identifier.to_s
       if @identifier
         start_reporting(force)
+        config.log! "ATTENTION: This plugin was downloaded from svn.newrelic.com.  This repository " +
+                    "will be taken offline soon.  No more updates will be posted.  Please change your " +
+                    "externals URL to http://newrelic.rubyforge.org/svn/newrelic_rpm ASAP!", :warn
         config.log! "New Relic RPM Agent #{NewRelic::VERSION::STRING} Initialized: pid = #{$$}"
         config.log! "Agent Log is found in #{NewRelic::Config.instance.log_file}"
         return true
